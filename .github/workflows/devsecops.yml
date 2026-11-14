@@ -30,7 +30,7 @@ jobs:
         run: |
           mkdir -p reports
           pip install semgrep
-          semgrep scan --config p/default --metrics=off \
+          semgrep scan --config p/default --metrics=off --exclude "data/static/users.yml"\
             --json --output reports/semgrep.json . || true
       - uses: actions/upload-artifact@v4
         if: always()

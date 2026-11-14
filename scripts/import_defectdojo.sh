@@ -7,7 +7,9 @@ if [ -z "${DD_URL:-}" ] || [ -z "${DD_API_KEY:-}" ]; then
   exit 0
 fi
 
+DD_URL="$(printf '%s' "$DD_URL" | tr -d '[:space:]')"
 DD_URL="${DD_URL%/}"
+DD_API_KEY="$(printf '%s' "$DD_API_KEY" | tr -d '[:space:]')"
 PRODUCT="${PRODUCT:-app}"
 ENGAGEMENT="CI-${BRANCH:-main}"
 

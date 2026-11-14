@@ -29,7 +29,7 @@ import_scan() {  # $1 scan_type  $2 fichero  $3 titulo del test
 }
 
 import_scan "Semgrep JSON Report"  reports/semgrep.json                    "SAST - Semgrep"
-import_scan "Dependency Check Scan" reports/dependency-check-report.xml     "SCA - Dependency-Check"
+import_scan "Trivy Scan"           reports/trivy-sca.json                   "SCA - Trivy"
 import_scan "Checkov Scan"         reports/checkov.json                     "IaC - Checkov"
 import_scan "ZAP Scan"              reports/zap-report.xml                   "DAST - ZAP"
 echo "Importacion completada"

@@ -61,9 +61,20 @@ def zap(path):
     return c
 
 
+def trivy(path):
+    c = dict.fromkeys(SEVS, 0)
+    data = load_json(path) or {}
+    m = {"CRITICAL": "critical", "HIGH": "high", "MEDIUM": "medium",
+         "LOW": "low", "UNKNOWN": "info"}
+    for res in data.get("Results", []):
+        for v in res.get("Vulnerabilities") or []:
+            c[m.get(v.get("Severity", "UNKNOWN"), "info")] += 1
+    return c
+
+
 TOOLS = [
     ("SAST  Semgrep", "semgrep.json", semgrep),
-    ("SCA   Dependency-Check", "dependency-check-report.json", dependency_check),
+    ("SCA   Trivy", "trivy-sca.json", trivy),
     ("IaC   Checkov", "checkov.json", checkov),
     ("DAST  ZAP", "zap-report.json", zap),
 ]

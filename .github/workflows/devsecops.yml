@@ -39,30 +39,22 @@ jobs:
           path: reports/
 
   sca:
-    name: SCA - OWASP Dependency-Check
-    continue-on-error: true
+    name: SCA - Trivy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+      - uses: actions/setup-node@v4
         with:
-          path: dc-data
-          key: dc-data-${{ github.run_id }}
-          restore-keys: dc-data-
-      - name: Dependency-Check
-        env:
-          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+          node-version: "22"
+      - name: Generar lockfiles (sin instalar dependencias)
         run: |
-          mkdir -p reports dc-data
-          docker run --rm --user "$(id -u):$(id -g)" \
-            -v "$PWD:/src" \
-            -v "$PWD/dc-data:/usr/share/dependency-check/data" \
-            -v "$PWD/reports:/report" \
-            owasp/dependency-check:latest \
-            --scan /src --exclude "**/node_modules/**" \
-            --project "${GITHUB_REPOSITORY##*/}" \
-            --format JSON --format XML --out /report \
-            ${NVD_API_KEY:+--nvdApiKey "$NVD_API_KEY"}
+          npm install --package-lock-only --ignore-scripts --legacy-peer-deps
+          (cd frontend && npm install --package-lock-only --ignore-scripts --legacy-peer-deps)
+      - name: Trivy (dependencias)
+        run: |
+          mkdir -p reports
+          docker run --rm -v "$PWD:/src" aquasec/trivy:latest fs \
+            --scanners vuln --format json --output /src/reports/trivy-sca.json /src
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -1,0 +1,14 @@
+flowchart TD
+  A[1. Una herramienta detecta un hallazgo] --> B[2. Informe a DefectDojo<br/>siempre, via API]
+  B --> C{Critica o alta?}
+  C -- no --> D[Queda como hallazgo activo<br/>sin bloquear]
+  C -- si --> E{La etapa es bloqueante?}
+  E -- no, Gate A --> F[Modo aviso: el pipeline continua<br/>y avisa en el resumen del job]
+  E -- si, Gate B --> G[El pipeline falla:<br/>no llega a produccion y se avisa al autor]
+  D --> H[3. Triaje en DefectDojo:<br/>el equipo revisa y prioriza]
+  F --> H
+  G --> H
+  H --> I{Falso positivo?}
+  I -- si --> J[Marcar False positive con justificacion<br/>y ajustar la regla de la herramienta]
+  I -- no --> K[Corregir codigo o dependencia y commit:<br/>el pipeline vuelve al paso 1]
+  K -.si ya no se detecta.-> L[DefectDojo lo marca Mitigated]

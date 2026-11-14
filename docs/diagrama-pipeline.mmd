@@ -1,0 +1,16 @@
+flowchart LR
+  T([push / pull request a main]) --> S1
+  subgraph S1[stage: analisis]
+    direction TB
+    SAST[SAST: Semgrep<br/>semgrep.json]
+    SCA[SCA: Dependency-Check<br/>dependency-check-report.xml/json]
+    IAC[IaC: Checkov<br/>checkov.json]
+  end
+  S1 --> GA{{Gate A<br/>modo aviso<br/>critical/high}}
+  GA --> ST[stage: staging<br/>docker build + run en el runner]
+  ST --> DAST[stage: dast<br/>ZAP baseline<br/>zap-report.xml/json]
+  DAST --> GB{{Gate B<br/>BLOQUEANTE<br/>critical/high}}
+  GB -->|pasa + aprobacion manual| PROD[stage: produccion<br/>solo main]
+  S1 -. informes .-> DD
+  DAST -. informe .-> DD
+  DD[(DefectDojo<br/>reimport-scan via API<br/>job siempre, aunque falle)]

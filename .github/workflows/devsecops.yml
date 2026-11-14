@@ -1,0 +1,183 @@
+name: DevSecOps Pipeline
+
+# Se dispara con cada push o pull request a main
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  APP_IMAGE: juice-shop:ci
+  # Umbral de los quality gates (severidades que cuentan como "fallo")
+  GATE_FAIL_ON: "critical,high"
+
+jobs:
+  # ---------- Etapa ANALISIS (build): SAST + SCA + IaC ----------
+  sast:
+    name: SAST - Semgrep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Semgrep
+        run: |
+          mkdir -p reports
+          pip install semgrep
+          semgrep scan --config p/default --metrics=off \
+            --json --output reports/semgrep.json . || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reports-sast
+          path: reports/
+
+  sca:
+    name: SCA - OWASP Dependency-Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: dc-data
+          key: dc-data-${{ github.run_id }}
+          restore-keys: dc-data-
+      - name: Dependency-Check
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: |
+          mkdir -p reports dc-data
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "$PWD:/src" \
+            -v "$PWD/dc-data:/usr/share/dependency-check/data" \
+            -v "$PWD/reports:/report" \
+            owasp/dependency-check:latest \
+            --scan /src --exclude "**/node_modules/**" \
+            --project "${GITHUB_REPOSITORY##*/}" \
+            --format JSON --format XML --out /report \
+            ${NVD_API_KEY:+--nvdApiKey "$NVD_API_KEY"} || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reports-sca
+          path: reports/
+
+  iac:
+    name: IaC - Checkov (Dockerfile)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Checkov
+        run: |
+          mkdir -p reports
+          pip install checkov
+          checkov -d . --framework dockerfile --soft-fail \
+            -o json --output-file-path reports
+          mv reports/results_json.json reports/checkov.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reports-iac
+          path: reports/
+
+  # ---------- Gate A: MODO AVISO (no bloquea) ----------
+  gate_a:
+    name: Gate A (modo aviso)
+    needs: [sast, sca, iac]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: reports-*
+          path: reports
+          merge-multiple: true
+      - name: Quality gate A
+        run: python3 scripts/quality_gate.py --reports reports --fail-on "$GATE_FAIL_ON" --mode warn --name "Gate A"
+
+  # ---------- Etapa STAGING + DAST ----------
+  dast:
+    name: Staging + DAST - ZAP
+    needs: gate_a
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build imagen
+        run: docker build -t "$APP_IMAGE" .
+      - name: Desplegar en staging (contenedor en el runner)
+        run: |
+          docker run -d --name staging -p 3000:3000 "$APP_IMAGE"
+          curl -fs --retry 40 --retry-delay 3 --retry-connrefused http://localhost:3000 > /dev/null
+      - name: ZAP baseline scan
+        run: |
+          mkdir -p reports && chmod 777 reports
+          # Para un ataque activo, cambia zap-baseline.py por: zap-full-scan.py -m 5 -T 20
+          docker run --rm --network host -v "$PWD/reports:/zap/wrk:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -t http://localhost:3000 \
+            -J zap-report.json -x zap-report.xml -I
+      - name: Logs de la aplicacion
+        if: failure()
+        run: docker logs staging
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reports-dast
+          path: reports/
+
+  # ---------- Gate B: BLOQUEANTE ----------
+  gate_b:
+    name: Gate B (bloqueante)
+    needs: [dast, sast, sca, iac]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: reports-*
+          path: reports
+          merge-multiple: true
+      - name: Quality gate B
+        run: python3 scripts/quality_gate.py --reports reports --fail-on "$GATE_FAIL_ON" --mode block --name "Gate B"
+
+  # ---------- Produccion: solo main, solo si pasa el gate B, con aprobacion ----------
+  deploy_production:
+    name: Despliegue en produccion
+    needs: [gate_b]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: production   # configura "Required reviewers" en Settings > Environments
+    steps:
+      - run: echo "Aqui iria el despliegue real (p. ej. kubectl apply -f k8s/)."
+
+  # ---------- Importacion en DefectDojo (siempre, aunque falle el pipeline) ----------
+  import_defectdojo:
+    name: Importar en DefectDojo
+    needs: [sast, sca, iac, dast, gate_b]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: reports-*
+          path: reports
+          merge-multiple: true
+      - name: Enviar informes a DefectDojo (API reimport-scan)
+        env:
+          DD_URL: ${{ secrets.DD_URL }}
+          DD_API_KEY: ${{ secrets.DD_API_KEY }}
+          BRANCH: ${{ github.ref_name }}
+          PRODUCT: ${{ github.event.repository.name }}
+        run: bash scripts/import_defectdojo.sh

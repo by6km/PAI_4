@@ -1,16 +1,17 @@
 flowchart LR
-  T([push / pull request a main]) --> S1
-  subgraph S1[stage: analisis]
+  T(["push / pull request a main"]) --> S1
+  subgraph S1["stage: analisis (jobs en paralelo)"]
     direction TB
-    SAST[SAST: Semgrep<br/>semgrep.json]
-    SCA[SCA: Dependency-Check<br/>dependency-check-report.xml/json]
-    IAC[IaC: Checkov<br/>checkov.json]
+    SAST["SAST: Semgrep<br/>semgrep.json"]
+    SCA["SCA: Trivy fs<br/>trivy-sca.json"]
+    IAC["IaC: Checkov Dockerfile<br/>checkov.json"]
   end
-  S1 --> GA{{Gate A<br/>modo aviso<br/>critical/high}}
-  GA --> ST[stage: staging<br/>docker build + run en el runner]
-  ST --> DAST[stage: dast<br/>ZAP baseline<br/>zap-report.xml/json]
-  DAST --> GB{{Gate B<br/>BLOQUEANTE<br/>critical/high}}
-  GB -->|pasa + aprobacion manual| PROD[stage: produccion<br/>solo main]
-  S1 -. informes .-> DD
-  DAST -. informe .-> DD
-  DD[(DefectDojo<br/>reimport-scan via API<br/>job siempre, aunque falle)]
+  S1 --> GA{{"Gate A<br/>MODO AVISO<br/>umbral: critical o high"}}
+  GA --> ST["stage: staging<br/>docker build + docker run en el runner"]
+  ST --> DAST["stage: dast<br/>ZAP baseline<br/>zap-report.xml / .json"]
+  DAST --> GB{{"Gate B<br/>BLOQUEANTE<br/>umbral: critical o high"}}
+  GB -->|"pasa"| PROD["stage: produccion<br/>solo main + aprobacion manual"]
+  GB -->|"falla"| STOP["Pipeline FALLA<br/>no hay despliegue"]
+  S1 -. "informes" .-> DD
+  DAST -. "informe" .-> DD
+  DD[("DefectDojo<br/>job import_defectdojo: se ejecuta siempre<br/>API reimport-scan")]

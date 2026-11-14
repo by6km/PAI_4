@@ -1,14 +1,15 @@
 flowchart TD
-  A[1. Una herramienta detecta un hallazgo] --> B[2. Informe a DefectDojo<br/>siempre, via API]
-  B --> C{Critica o alta?}
-  C -- no --> D[Queda como hallazgo activo<br/>sin bloquear]
-  C -- si --> E{La etapa es bloqueante?}
-  E -- no, Gate A --> F[Modo aviso: el pipeline continua<br/>y avisa en el resumen del job]
-  E -- si, Gate B --> G[El pipeline falla:<br/>no llega a produccion y se avisa al autor]
-  D --> H[3. Triaje en DefectDojo:<br/>el equipo revisa y prioriza]
+  A["1. Una herramienta detecta un hallazgo<br/>Semgrep, Trivy, Checkov o ZAP"] --> B["2. El informe se envia a DefectDojo<br/>siempre, via API"]
+  A --> C{"Supera el umbral?<br/>critical o high"}
+  C -- no --> D["Queda registrado como hallazgo activo<br/>el pipeline no se ve afectado"]
+  C -- si --> E{"La etapa es bloqueante?"}
+  E -- "no: Gate A" --> F["Modo aviso: el pipeline continua<br/>y avisa en anotaciones y resumen del job"]
+  E -- "si: Gate B" --> G["El pipeline falla: no llega a produccion<br/>y GitHub avisa al autor del push"]
+  B --> H
+  D --> H
   F --> H
   G --> H
-  H --> I{Falso positivo?}
-  I -- si --> J[Marcar False positive con justificacion<br/>y ajustar la regla de la herramienta]
-  I -- no --> K[Corregir codigo o dependencia y commit:<br/>el pipeline vuelve al paso 1]
-  K -.si ya no se detecta.-> L[DefectDojo lo marca Mitigated]
+  H["3. Triaje en DefectDojo:<br/>el equipo revisa, deduplica y prioriza"] --> I{"Falso positivo?"}
+  I -- si --> J["Marcar False positive con justificacion<br/>y ajustar la regla de la herramienta"]
+  I -- no --> K["Corregir codigo o dependencia y hacer commit:<br/>el pipeline vuelve al paso 1"]
+  K -. "si ya no se detecta<br/>close_old_findings" .-> L["DefectDojo lo marca como Mitigated"]

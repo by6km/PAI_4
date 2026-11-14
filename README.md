@@ -1,29 +1,79 @@
-# PAI-4 DevSecOps - Pipeline de seguridad en GitHub Actions
+# PAI-4 DevSecOps · Pipeline de seguridad en GitHub Actions
 
-Pipeline sobre **OWASP Juice Shop** (Node.js) con 4 tipos de pruebas, 2 quality gates y gestión en DefectDojo.
+Pipeline DevSecOps sobre **OWASP Juice Shop** (Node.js / Angular), una aplicación web vulnerable a propósito. Integra cuatro tipos de pruebas de seguridad, dos quality gates y la gestión centralizada de hallazgos en DefectDojo.
+
+El pipeline está definido en [`.github/workflows/devsecops.yml`](.github/workflows/devsecops.yml) y se ejecuta con cada `push` o `pull request` a `main`.
+
+## Herramientas
 
 | Tipo | Herramienta | Etapa | Informe |
 |---|---|---|---|
-| SAST | Semgrep CE | análisis | `semgrep.json` |
-| SCA | OWASP Dependency-Check | análisis | `dependency-check-report.xml/json` |
+| SAST | Semgrep Community Edition | análisis | `semgrep.json` |
+| SCA | Trivy (modo `fs`) | análisis | `trivy-sca.json` |
 | IaC | Checkov (Dockerfile) | análisis | `checkov.json` |
-| DAST | OWASP ZAP | staging + dast | `zap-report.xml/json` |
+| DAST | OWASP ZAP (baseline) | staging + dast | `zap-report.xml` / `zap-report.json` |
+| Gestión | DefectDojo | siempre, al final | importación por API |
 
-- **Gate A (modo aviso)**: tras el análisis; avisa de críticas/altas y el pipeline sigue.
-- **Gate B (bloqueante)**: tras el DAST; si hay críticas/altas, el pipeline falla y no hay despliegue a producción.
-- **import_defectdojo**: se ejecuta siempre y envía los 4 informes por la API (`reimport-scan`).
-- Diagramas (objetivo 1): `docs/diagrama-pipeline.mmd` y `docs/diagrama-flujo.mmd` (pegar en https://mermaid.live y exportar a PNG/SVG).
+**Por qué Trivy en SCA.** Se empezó con OWASP Dependency-Check, pero la API de NVD devolvía errores 503 y Juice Shop no incluye `package-lock.json`, de modo que el análisis no era fiable. Trivy usa su propia base de datos de vulnerabilidades y, con los lockfiles que el pipeline genera antes (`npm install --package-lock-only`), analiza correctamente las dependencias.
+
+## Etapas del pipeline
+
+1. **Análisis** (jobs en paralelo): `sast`, `sca` e `iac`. Cada uno sube su informe como artefacto.
+2. **Gate A · modo aviso**: cuenta hallazgos críticos y altos y avisa en anotaciones y en el resumen del job, pero el pipeline continúa.
+3. **Staging + DAST**: se construye la imagen, se despliega en un contenedor del runner y se ataca con ZAP.
+4. **Gate B · bloqueante**: si hay hallazgos críticos o altos, el pipeline falla y no se llega a producción.
+5. **Producción**: solo en `main`, solo si pasa el Gate B y con aprobación manual (environment `production`).
+6. **Importar en DefectDojo**: se ejecuta siempre, aunque el pipeline falle, y envía los informes por API.
+
+Los diagramas de diseño están en `docs/`: `diagrama-pipeline.mmd` (etapas, herramientas, informes y gates) y `diagrama-flujo.mmd` (qué ocurre ante una vulnerabilidad), con sus imágenes exportadas.
+
+## Quality gates
+
+- Los gates los evalúa `scripts/quality_gate.py`, que lee los informes de las cuatro herramientas y cuenta hallazgos por severidad.
+- El umbral se define en la variable `GATE_FAIL_ON` del workflow (por defecto `critical,high`).
+- Como la aplicación es vulnerable a propósito, un gate bloqueante en la fase de análisis impediría llegar al DAST. Por eso Gate A solo avisa y Gate B es el que bloquea.
+
+## DefectDojo
+
+- `scripts/import_defectdojo.sh` envía cada informe a la API (`/api/v2/reimport-scan/`) con estos tipos de escaneo: `Semgrep JSON Report`, `Trivy Scan`, `Checkov Scan` y `ZAP Scan`.
+- Producto: nombre del repositorio. Engagement: `CI-<rama>`. Se usa `close_old_findings`, de modo que lo que deja de detectarse pasa a *Mitigated*.
+- Los falsos positivos se marcan en DefectDojo con su justificación en las notas.
+- DefectDojo se despliega en local con Docker Compose y se expone al pipeline mediante un túnel de Cloudflare. La URL del túnel cambia en cada sesión, así que hay que actualizar el secreto `DD_URL` antes de lanzar una ejecución que importe resultados.
+
+## Secretos necesarios
+
+En *Settings > Secrets and variables > Actions*:
+
+| Secreto | Contenido |
+|---|---|
+| `DD_URL` | URL de DefectDojo, sin barra final |
+| `DD_API_KEY` | Token de la API de DefectDojo |
+
+Ningún secreto está en el repositorio. Si faltan `DD_URL` o `DD_API_KEY`, la importación se omite con un aviso.
 
 ## Puesta en marcha
-1. Haz **fork** de https://github.com/juice-shop/juice-shop (haz el repositorio privado si puedes y dale acceso al profesorado).
-2. En tu fork, **borra** `.github/workflows/*` originales de Juice Shop y copia `.github/workflows/devsecops.yml`, `scripts/` y `docs/`.
-3. En *Settings > Secrets and variables > Actions* crea: `DD_URL` (p. ej. `https://tu-defectdojo`), `DD_API_KEY` y, opcional pero muy recomendable, `NVD_API_KEY` (gratis en nvd.nist.gov; sin ella Dependency-Check tarda mucho).
-4. En *Settings > Environments* crea `production` y añade *Required reviewers* (aprobación manual).
-5. Levanta DefectDojo (https://github.com/DefectDojo/django-DefectDojo, `docker compose up`). GitHub tiene que poder alcanzarlo: servidor/VM con IP pública, túnel (cloudflared/ngrok) o *self-hosted runner* en tu máquina.
-6. Haz un push a `main`. Gate B fallará con las críticas de Juice Shop: **esa es tu evidencia de "ejecución que falla por un quality gate"**.
 
-## Ajustes
-- Umbral: variable `GATE_FAIL_ON` en el workflow (`critical,high`; `none` para no bloquear).
-- DAST más agresivo: sustituye `zap-baseline.py` por `zap-full-scan.py -m 5 -T 20`.
-- **Importante**: si cambias el pipeline, actualiza los diagramas y explica el cambio en el informe.
-- Los secretos NUNCA en el repositorio.
+1. Repositorio con el código de Juice Shop y los ficheros del pipeline (`.github/workflows/`, `scripts/`, `docs/`).
+2. Crear los secretos `DD_URL` y `DD_API_KEY`.
+3. Crear el environment `production` con *Required reviewers* (aprobación manual del despliegue).
+4. Levantar DefectDojo y el túnel si se quiere la importación.
+5. Hacer `push` a `main`: el pipeline se ejecuta solo.
+
+Cambiar el umbral: editar `GATE_FAIL_ON` en el workflow (`none` desactiva el bloqueo).
+
+## Resultado de referencia
+
+Ejecución con Gate B fallando: <https://github.com/by6km/PAI_4/actions/runs/43640703502>
+
+| Herramienta | Críticas | Altas | Medias | Bajas | Info |
+|---|---|---|---|---|---|
+| SAST · Semgrep | 0 | 12 | 56 | 5 | 0 |
+| SCA · Trivy | 7 | 23 | 26 | 4 | 0 |
+| IaC · Checkov | 0 | 0 | 6 | 0 | 0 |
+| DAST · ZAP | 0 | 0 | 2 | 4 | 3 |
+
+Las cuatro herramientas detectan vulnerabilidades. Gate B bloquea por los hallazgos críticos y altos de Semgrep y Trivy, y el despliegue a producción no se ejecuta.
+
+## Uso responsable
+
+El análisis dinámico y los escáneres se ejecutan solo contra la aplicación desplegada por el propio equipo, en el runner de la ejecución.

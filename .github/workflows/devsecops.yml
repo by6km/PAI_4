@@ -40,6 +40,7 @@ jobs:
 
   sca:
     name: SCA - OWASP Dependency-Check
+    continue-on-error: true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,7 +62,7 @@ jobs:
             --scan /src --exclude "**/node_modules/**" \
             --project "${GITHUB_REPOSITORY##*/}" \
             --format JSON --format XML --out /report \
-            ${NVD_API_KEY:+--nvdApiKey "$NVD_API_KEY"} || true
+            ${NVD_API_KEY:+--nvdApiKey "$NVD_API_KEY"}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -117,7 +118,12 @@ jobs:
       - name: Desplegar en staging (contenedor en el runner)
         run: |
           docker run -d --name staging -p 3000:3000 "$APP_IMAGE"
-          curl -fs --retry 40 --retry-delay 3 --retry-connrefused http://localhost:3000 > /dev/null
+          for i in $(seq 1 40); do
+            if curl -fs http://localhost:3000 > /dev/null; then echo "App lista"; exit 0; fi
+            echo "Esperando a la app ($i/40)..."; sleep 5
+          done
+          docker logs staging
+          exit 1
       - name: ZAP baseline scan
         run: |
           mkdir -p reports && chmod 777 reports

@@ -179,3 +179,35 @@ jobs:
           BRANCH: ${{ github.ref_name }}
           PRODUCT: ${{ github.event.repository.name }}
         run: bash scripts/import_defectdojo.sh
+
+  readable_reports:
+    name: Evidencias legibles - SAST SCA IaC
+    needs: [sast, sca, iac, import_defectdojo]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Comprobar generador
+        run: python3 -B -m unittest discover -s test/scripts -p 'test_readable_reports.py'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: reports-*
+          path: reports
+          merge-multiple: true
+      - name: Generar informes de los archivos destinados a DefectDojo
+        if: ${{ !cancelled() }}
+        env:
+          DD_JOB_RESULT: ${{ needs.import_defectdojo.result }}
+          SAST_JOB_RESULT: ${{ needs.sast.result }}
+          SCA_JOB_RESULT: ${{ needs.sca.result }}
+          IAC_JOB_RESULT: ${{ needs.iac.result }}
+        run: python3 scripts/readable_reports.py --reports reports --output evidencias-analisis
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: evidencias-analisis-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidencias-analisis/
+          if-no-files-found: error
